@@ -23,7 +23,7 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
     public string DisplayAuthor => "Tsukasa";
 
     private const string CameraClassname = "custom_player_camera";
-    private const byte ModeFollowPosition = 3;
+    private const string CameraClassName = "CCSCustomPlayerCamera";
     private static int _eyePositionVfuncIndex;
     private static int _cameraPawnHandleOffset;
 
@@ -109,6 +109,23 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
             return false;
         }
 
+        if (!_modSharp.GetLibraryModule("server").TryGetVirtualTableByName(CameraClassName, out var vtable))
+        {
+            Console.WriteLine("[ThirdPerson] camera vtable not found");
+            return false;
+        }
+
+        var eyeHook = _hooks.CreateVirtualHook();
+        eyeHook.Prepare(vtable, _eyePositionVfuncIndex, (nint)(delegate* unmanaged<nint, nint, nint>)&HookGetEyePosition);
+        if (!eyeHook.Install())
+        {
+            Console.WriteLine("[ThirdPerson] eye position hook install failed");
+            return false;
+        }
+
+        _eyeTrampoline = eyeHook.Trampoline;
+        _eyeHook = eyeHook;
+
         _modSharp.InstallGameListener(this);
         _clients.InstallClientListener(this);
         _events.InstallEventListener(this);
@@ -188,7 +205,7 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
 
         RemoveCamera(slot);
 
-        var camera = _entities.CreateEntityByName(CameraClassname);
+        var camera = _entities.CreateEntityByName<ICustomPlayerCamera>(CameraClassname);
         if (camera == null)
         {
             controller.Print(HudPrintChannel.Chat, " [TP] Failed to create camera");
@@ -198,20 +215,20 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
         uint pawnHandle = pawn.Handle.GetValue();
         camera.DispatchSpawn();
         camera.Teleport(pawn.GetAbsOrigin(), null, null);
-        camera.SetNetVar("m_hFollowEntity", pawnHandle);
-        camera.SetNetVar("m_bFollowEyes", true);
-        camera.SetNetVar("m_vecFollowOffset", new Vector(0f, 0f, 0f));
-        camera.SetNetVar("m_vecCameraOffset", new Vector(-_options.Distance, _options.Side, _options.Up));
-        camera.SetNetVar("m_bClipCameraOffset", _options.Clip);
-        camera.SetNetVar("m_flCameraOffsetReturnStrength", _options.ReturnStrength);
-        camera.SetNetVar("m_hPawn", pawnHandle);
-        camera.SetNetVar("m_nCameraMode", ModeFollowPosition);
+        camera.FollowEntityHandle = pawnHandle;
+        camera.FollowEyes = true;
+        camera.FollowOffset = new Vector(0f, 0f, 0f);
+        camera.CameraOffset = new Vector(-_options.Distance, _options.Side, _options.Up);
+        camera.ClipCameraOffset = _options.Clip;
+        camera.CameraOffsetReturnStrength = _options.ReturnStrength;
+        camera.PawnHandle = pawnHandle;
+        camera.CameraMode = CustomCameraMode.FollowPosition;
         pawn.GetCameraService()?.ViewEntity = camera;
 
         _cameras[slot] = camera;
         _enabled[slot] = true;
         _pawnHandles[slot] = pawnHandle;
-        EnsureEyeHookInstalled(camera.GetAbsPtr(), pawnHandle, pawn.GetAbsPtr());
+        _pawnHandleToPawnPtr[pawnHandle] = pawn.GetAbsPtr();
         controller.Print(HudPrintChannel.Chat, " [TP] Third person enabled");
     }
 
@@ -314,22 +331,6 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
     int IClientListener.ListenerPriority => 0;
     int IEventListener.ListenerVersion => IEventListener.ApiVersion;
     int IEventListener.ListenerPriority => 0;
-
-    private void EnsureEyeHookInstalled(nint cameraPtr, uint pawnHandle, nint pawnPtr)
-    {
-        _pawnHandleToPawnPtr[pawnHandle] = pawnPtr;
-        if (_eyeHook != null)
-            return;
-
-        var cameraVtable = Marshal.ReadIntPtr(cameraPtr);
-        var hook = _hooks.CreateVirtualHook();
-        hook.Prepare(cameraVtable, _eyePositionVfuncIndex, (nint)(delegate* unmanaged<nint, nint, nint>)&HookGetEyePosition);
-        if (!hook.Install())
-            return;
-
-        _eyeTrampoline = hook.Trampoline;
-        _eyeHook = hook;
-    }
 
     [UnmanagedCallersOnly]
     private static nint HookGetEyePosition(nint self, nint outVec)
