@@ -1,0 +1,34 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: dotnet build ThirdPerson.csproj -c Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/sharp/gamedata, package/sharp/modules/ThirdPerson, package/sharp/configs/ThirdPerson | Out-Null
+          Copy-Item build/ThirdPerson.dll package/sharp/modules/ThirdPerson/
+          Copy-Item build/ThirdPerson.deps.json package/sharp/modules/ThirdPerson/
+          Copy-Item build/gamedata/ThirdPerson.games.jsonc package/sharp/gamedata/
+          Copy-Item build/configs/ThirdPerson/config.jsonc package/sharp/configs/ThirdPerson/
+          Compress-Archive -Path package/sharp -DestinationPath ThirdPerson.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThirdPerson
+          path: ThirdPerson.zip
