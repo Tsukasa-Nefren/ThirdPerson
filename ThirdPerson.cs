@@ -24,8 +24,6 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
 
     private const string CameraClassname = "custom_player_camera";
     private const byte ModeFollowPosition = 3;
-    private const string GameDataFile = "ThirdPerson.games.jsonc";
-
     private static int _eyePositionVfuncIndex;
     private static int _cameraPawnHandleOffset;
 
@@ -36,6 +34,7 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
         _entities = sharedSystem.GetEntityManager();
         _events = sharedSystem.GetEventManager();
         _hooks = sharedSystem.GetHookManager();
+        _schema = sharedSystem.GetSchemaManager();
         _configPath = Path.Combine(sharpPath ?? string.Empty, "configs", "ThirdPerson", "config.jsonc");
     }
 
@@ -44,6 +43,7 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
     private readonly IEntityManager _entities;
     private readonly IEventManager _events;
     private readonly IHookManager _hooks;
+    private readonly ISchemaManager _schema;
     private readonly string _configPath;
     private Options _options = new();
 
@@ -100,14 +100,12 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
 
         try
         {
-            var gameData = _modSharp.GetGameData();
-            gameData.Register(GameDataFile);
-            _eyePositionVfuncIndex = gameData.GetVFuncIndex("ThirdPerson.CCSCustomPlayerCamera", "GetEyePosition");
-            _cameraPawnHandleOffset = gameData.GetOffset("ThirdPerson.CCSCustomPlayerCamera", "m_hPawn");
+            _eyePositionVfuncIndex = _modSharp.GetGameData().GetVFuncIndex("CBaseEntity", "GetEyePosition");
+            _cameraPawnHandleOffset = _schema.GetNetVarOffset("CCSCustomPlayerCamera", "m_hPawn");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ThirdPerson] gamedata incomplete: {ex.Message}");
+            Console.WriteLine($"[ThirdPerson] gamedata resolution failed: {ex.Message}");
             return false;
         }
 
@@ -147,11 +145,6 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
         _pawnHandleToPawnPtr.Clear();
         _entitiesStatic = null;
 
-        try
-        {
-            _modSharp.GetGameData().Unregister(GameDataFile);
-        }
-        catch (Exception) { }
     }
 
     private ECommandAction OnCommandToggle(IGameClient client, StringCommand command)
