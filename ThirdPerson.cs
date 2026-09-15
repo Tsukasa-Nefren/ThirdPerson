@@ -116,7 +116,10 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
         }
 
         var eyeHook = _hooks.CreateVirtualHook();
-        eyeHook.Prepare(vtable, _eyePositionVfuncIndex, (nint)(delegate* unmanaged<nint, nint, nint>)&HookGetEyePosition);
+        var hookPointer = OperatingSystem.IsLinux()
+            ? (nint)(delegate* unmanaged<nint, Vector>)&HookGetEyePositionLinux
+            : (nint)(delegate* unmanaged<nint, nint, nint>)&HookGetEyePosition;
+        eyeHook.Prepare(vtable, _eyePositionVfuncIndex, hookPointer);
         if (!eyeHook.Install())
         {
             Console.WriteLine("[ThirdPerson] eye position hook install failed");
@@ -359,5 +362,33 @@ public unsafe class ThirdPerson : IModSharpModule, IGameListener, IClientListene
         return _eyeTrampoline != nint.Zero
             ? ((delegate* unmanaged<nint, nint, nint>)_eyeTrampoline)(self, outVec)
             : outVec;
+    }
+
+    [UnmanagedCallersOnly]
+    private static Vector HookGetEyePositionLinux(nint self)
+    {
+        if (_entitiesStatic is { } entities)
+        {
+            uint pawnHandle = *(uint*)(self + _cameraPawnHandleOffset);
+            if (pawnHandle != 0xFFFFFFFF
+                && _pawnHandleToPawnPtr.TryGetValue(pawnHandle, out var pawnPtr)
+                && pawnPtr != nint.Zero)
+            {
+                var pawn = entities.MakeEntityFromPointer<IBaseModelEntity>(pawnPtr);
+                if (pawn != null && pawn.IsValid())
+                {
+                    var origin = pawn.GetAbsOrigin();
+                    var viewOffset = pawn.ViewOffset;
+                    return new Vector(
+                        origin.X + viewOffset.X,
+                        origin.Y + viewOffset.Y,
+                        origin.Z + viewOffset.Z);
+                }
+            }
+        }
+
+        return _eyeTrampoline != nint.Zero
+            ? ((delegate* unmanaged<nint, Vector>)_eyeTrampoline)(self)
+            : default;
     }
 }
